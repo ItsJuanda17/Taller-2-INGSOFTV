@@ -1,0 +1,61 @@
+# =============================================================================
+# .dockerignore
+# Files NOT sent to the Docker daemon as build context.
+# Keeps builds fast and avoids leaking local artifacts/secrets into images.
+# =============================================================================
+
+# --- Gradle / Java build outputs ---
+**/build/
+**/.gradle/
+**/bin/
+**/out/
+*.class
+*.jar
+*.war
+
+# --- IDE / editor ---
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.settings/
+.classpath
+.project
+.factorypath
+
+# --- Git / VCS ---
+.git/
+.gitignore
+.gitattributes
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+
+# --- Logs and local caches ---
+*.log
+logs/
+
+# --- Mobile app (not part of the JVM service images) ---
+mobile/
+
+# --- Workshop / scratch / docs that aren't needed at build time ---
+scratch/
+docs/
+design-assets/
+*.md
+!README.md
+
+# --- Local docker-compose volumes ---
+pgdata/
+neo4jdata/
+*_data/
+
+# --- Existing docker pipeline artefacts ---
+**/Dockerfile
+!services/*/Dockerfile
+
+# --- CI / Jenkins ---
+Jenkinsfile
+k8s/
