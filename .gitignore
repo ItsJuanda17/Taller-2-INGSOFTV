@@ -46,3 +46,6 @@ web-build/
 *_data/
 pgdata/
 neo4jdata/
+
+# Jenkins / K8s local secrets (contains client cert + key for the dev cluster)
+infra/jenkins/.kubeconfig-incontainer
