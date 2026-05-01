@@ -70,6 +70,11 @@ spec:
     metadata:
       labels: { app: neo4j }
     spec:
+      # Same reason as kafka: Neo4j 5.x has strict_validation.enabled by
+      # default and blows up when it sees the K8s-injected env vars
+      # (e.g. NEO4J_PORT_7687_TCP_PORT=tcp://10.x.x.x:7687) because it tries
+      # to interpret every NEO4J_* var as a config key.
+      enableServiceLinks: false
       containers:
         - name: neo4j
           image: neo4j:5.26
@@ -141,18 +146,35 @@ spec:
     metadata:
       labels: { app: kafka }
     spec:
+      # Disable K8s "service-link" env vars (e.g. KAFKA_PORT=tcp://10.x.x.x:9092).
+      # The cp-kafka entrypoint sees KAFKA_PORT, treats it as the deprecated
+      # legacy "port number" config, fails to parse "tcp://..." as int, and
+      # silently exits during the configure step. Turning these injected vars
+      # off lets our explicit KAFKA_* env vars below take effect.
+      enableServiceLinks: false
       containers:
         - name: kafka
           image: confluentinc/cp-kafka:7.6.0
           ports:
             - containerPort: 9092
           env:
-            - { name: KAFKA_BROKER_ID,                       value: "1" }
-            - { name: KAFKA_ZOOKEEPER_CONNECT,               value: "zookeeper:2181" }
-            - { name: KAFKA_ADVERTISED_LISTENERS,            value: "PLAINTEXT://kafka:9092" }
-            - { name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP,  value: "PLAINTEXT:PLAINTEXT" }
-            - { name: KAFKA_INTER_BROKER_LISTENER_NAME,      value: "PLAINTEXT" }
-            - { name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_BROKER_ID,                            value: "1" }
+            - { name: KAFKA_ZOOKEEPER_CONNECT,                    value: "zookeeper:2181" }
+            # KAFKA_LISTENERS = where the broker BINDS the socket. Must be
+            # 0.0.0.0 inside K8s because the pod cannot resolve its own
+            # Service name to itself at start time.
+            - { name: KAFKA_LISTENERS,                            value: "PLAINTEXT://0.0.0.0:9092" }
+            # KAFKA_ADVERTISED_LISTENERS = what the broker tells clients to
+            # connect to. From inside the cluster they reach it via the
+            # Service DNS name "kafka:9092".
+            - { name: KAFKA_ADVERTISED_LISTENERS,                 value: "PLAINTEXT://kafka:9092" }
+            - { name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP,       value: "PLAINTEXT:PLAINTEXT" }
+            - { name: KAFKA_INTER_BROKER_LISTENER_NAME,           value: "PLAINTEXT" }
+            # Single-broker DEV cluster -> all replication factors must be 1.
+            - { name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR,     value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR,        value: "1" }
+            - { name: KAFKA_AUTO_CREATE_TOPICS_ENABLE,            value: "true" }
 ---
 apiVersion: v1
 kind: Service
