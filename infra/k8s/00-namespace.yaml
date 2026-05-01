@@ -1,0 +1,16 @@
+# =============================================================================
+# CircleGuard - Kubernetes namespace
+# -----------------------------------------------------------------------------
+# A namespace is a logical "folder" inside the cluster. Putting every
+# CircleGuard resource here keeps it isolated from other apps you may run on
+# the same cluster (and lets you delete the whole stack with one command:
+#   kubectl delete namespace circleguard
+# ).
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: circleguard
+  labels:
+    app.kubernetes.io/part-of: circleguard
+    environment: dev

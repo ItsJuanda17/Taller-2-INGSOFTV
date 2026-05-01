@@ -56,6 +56,7 @@ neo4jdata/
 **/Dockerfile
 !services/*/Dockerfile
 
-# --- CI / Jenkins ---
+# --- CI / Jenkins / Infrastructure-as-Code ---
 Jenkinsfile
 k8s/
+infra/

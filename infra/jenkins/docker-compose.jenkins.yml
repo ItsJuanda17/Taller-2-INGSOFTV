@@ -1,0 +1,52 @@
+# =============================================================================
+# CircleGuard - Jenkins controller (local DEV)
+# -----------------------------------------------------------------------------
+# Usage (from repo root):
+#   docker compose -f infra/jenkins/docker-compose.jenkins.yml up -d --build
+#   docker compose -f infra/jenkins/docker-compose.jenkins.yml logs -f jenkins
+#
+# After first boot:
+#   1. Open http://localhost:8080
+#   2. Read the initial admin password from the volume:
+#        docker exec circleguard-jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+#   3. Skip "Install suggested plugins" (we already baked them in via plugins.txt).
+#   4. Create your admin user.
+# =============================================================================
+services:
+  jenkins:
+    container_name: circleguard-jenkins
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: circleguard-jenkins:lts
+    restart: unless-stopped
+    ports:
+      - "8080:8080"     # web UI
+      - "50000:50000"   # JNLP port (only needed if you add remote agents)
+    environment:
+      # JVM tuning. -Xmx2g is plenty for a local controller running ~6 jobs.
+      JAVA_OPTS: "-Djenkins.install.runSetupWizard=true -Xmx2g"
+      # Skip the noisy "you should secure your Jenkins" banner during local dev.
+      JENKINS_OPTS: "--prefix=/"
+    volumes:
+      # Persist Jenkins home (jobs, build history, plugins) across restarts.
+      - jenkins_home:/var/jenkins_home
+      # CRITICAL: mount the host's Docker socket so Jenkins can build/run images
+      # using the host daemon. This avoids the (more complex) Docker-in-Docker
+      # setup. On Docker Desktop for Windows the named pipe is exposed via WSL2
+      # at this same path inside Linux containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount the user's kubeconfig (READ-ONLY) so kubectl inside the container
+      # talks to the same Kubernetes cluster you see from PowerShell.
+      # Docker Desktop writes kubeconfig to %USERPROFILE%\.kube\config on Windows
+      # and exposes it inside WSL2 at /mnt/c/Users/<user>/.kube/config.
+      # We rely on the env var KUBECONFIG_HOST_PATH so each developer can
+      # override the path without editing this file.
+      - ${KUBECONFIG_HOST_PATH:-${USERPROFILE}/.kube/config}:/var/jenkins_home/.kube/config:ro
+    # Re-use the host's docker GID so the "jenkins" user has permission to
+    # read /var/run/docker.sock. On Docker Desktop / Windows the socket is
+    # owned by root:root inside the container, so we just keep the default.
+
+volumes:
+  jenkins_home:
+    name: circleguard_jenkins_home

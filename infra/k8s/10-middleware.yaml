@@ -1,0 +1,192 @@
+# =============================================================================
+# CircleGuard - middleware (Postgres, Neo4j, Kafka, Zookeeper, Redis)
+# -----------------------------------------------------------------------------
+# This file is the K8s equivalent of docker-compose.dev.yml. It is intentionally
+# DEV-ONLY: every component runs as a single replica with an emptyDir volume,
+# so the data is wiped when the pod is replaced. That is FINE for local
+# development -- not for stage/master.
+#
+# Each component has TWO objects:
+#   - Deployment: tells K8s how to run the container
+#   - Service:    gives the pod a stable DNS name (e.g. "postgres") so the
+#                 other microservices can reach it via the URLs in
+#                 circleguard-config (see 01-configmap.yaml).
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# PostgreSQL 16
+# -----------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: circleguard
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: circleguard-secrets, key: POSTGRES_USER } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: circleguard-secrets, key: POSTGRES_PASSWORD } }
+            - name: POSTGRES_DB
+              valueFrom: { configMapKeyRef: { name: circleguard-config, key: POSTGRES_DB } }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "admin"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata: { name: postgres, namespace: circleguard }
+spec:
+  selector: { app: postgres }
+  ports: [{ port: 5432, targetPort: 5432 }]
+
+---
+# -----------------------------------------------------------------------------
+# Neo4j 5.26
+# -----------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: neo4j
+  namespace: circleguard
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: neo4j }
+  template:
+    metadata:
+      labels: { app: neo4j }
+    spec:
+      containers:
+        - name: neo4j
+          image: neo4j:5.26
+          ports:
+            - containerPort: 7474   # HTTP browser
+            - containerPort: 7687   # Bolt protocol
+          env:
+            - name: NEO4J_AUTH
+              value: "neo4j/password"
+            - name: NEO4J_PLUGINS
+              value: '["apoc"]'
+---
+apiVersion: v1
+kind: Service
+metadata: { name: neo4j, namespace: circleguard }
+spec:
+  selector: { app: neo4j }
+  ports:
+    - { name: http, port: 7474, targetPort: 7474 }
+    - { name: bolt, port: 7687, targetPort: 7687 }
+
+---
+# -----------------------------------------------------------------------------
+# Zookeeper (Kafka dependency)
+# -----------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zookeeper
+  namespace: circleguard
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: zookeeper }
+  template:
+    metadata:
+      labels: { app: zookeeper }
+    spec:
+      containers:
+        - name: zookeeper
+          image: confluentinc/cp-zookeeper:7.6.0
+          ports:
+            - containerPort: 2181
+          env:
+            - { name: ZOOKEEPER_CLIENT_PORT, value: "2181" }
+            - { name: ZOOKEEPER_TICK_TIME,   value: "2000" }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: zookeeper, namespace: circleguard }
+spec:
+  selector: { app: zookeeper }
+  ports: [{ port: 2181, targetPort: 2181 }]
+
+---
+# -----------------------------------------------------------------------------
+# Kafka 7.6
+# -----------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+  namespace: circleguard
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kafka }
+  template:
+    metadata:
+      labels: { app: kafka }
+    spec:
+      containers:
+        - name: kafka
+          image: confluentinc/cp-kafka:7.6.0
+          ports:
+            - containerPort: 9092
+          env:
+            - { name: KAFKA_BROKER_ID,                       value: "1" }
+            - { name: KAFKA_ZOOKEEPER_CONNECT,               value: "zookeeper:2181" }
+            - { name: KAFKA_ADVERTISED_LISTENERS,            value: "PLAINTEXT://kafka:9092" }
+            - { name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP,  value: "PLAINTEXT:PLAINTEXT" }
+            - { name: KAFKA_INTER_BROKER_LISTENER_NAME,      value: "PLAINTEXT" }
+            - { name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1" }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: kafka, namespace: circleguard }
+spec:
+  selector: { app: kafka }
+  ports: [{ port: 9092, targetPort: 9092 }]
+
+---
+# -----------------------------------------------------------------------------
+# Redis 7.2
+# -----------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: circleguard
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: redis }
+  template:
+    metadata:
+      labels: { app: redis }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.2
+          ports:
+            - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata: { name: redis, namespace: circleguard }
+spec:
+  selector: { app: redis }
+  ports: [{ port: 6379, targetPort: 6379 }]

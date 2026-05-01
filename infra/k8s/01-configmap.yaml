@@ -1,0 +1,59 @@
+# =============================================================================
+# CircleGuard - shared ConfigMap
+# -----------------------------------------------------------------------------
+# Holds NON-SENSITIVE configuration that every microservice needs:
+#   - URLs of sibling services (Kubernetes DNS, e.g. http://identity-service:8083)
+#   - Kafka / Redis / Postgres / Neo4j endpoints
+#
+# In Kubernetes, a Service named "identity-service" inside namespace
+# "circleguard" is reachable at:
+#     http://identity-service.circleguard.svc.cluster.local:<port>
+# or (when the caller is in the same namespace) simply:
+#     http://identity-service:<port>
+# That's how microservices find each other -- no IP addresses ever.
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: circleguard-config
+  namespace: circleguard
+data:
+  # ---- Inter-service URLs (used by Spring's @Value bindings) ----------------
+  CIRCLEGUARD_AUTH_SERVICE_URL:         "http://auth-service:8180"
+  CIRCLEGUARD_IDENTITY_SERVICE_URL:     "http://identity-service:8083"
+  CIRCLEGUARD_PROMOTION_SERVICE_URL:    "http://promotion-service:8088"
+  CIRCLEGUARD_DASHBOARD_SERVICE_URL:    "http://dashboard-service:8084"
+  CIRCLEGUARD_GATEWAY_SERVICE_URL:      "http://gateway-service:8087"
+  CIRCLEGUARD_NOTIFICATION_SERVICE_URL: "http://notification-service:8082"
+  AUTH_API_URL:                         "http://auth-service:8180"
+
+  # ---- Middleware (single in-cluster instance for DEV) ----------------------
+  POSTGRES_HOST:    "postgres"
+  POSTGRES_PORT:    "5432"
+  POSTGRES_DB:      "circleguard"
+  NEO4J_URI:        "bolt://neo4j:7687"
+  KAFKA_BOOTSTRAP:  "kafka:9092"
+  REDIS_HOST:       "redis"
+  REDIS_PORT:       "6379"
+
+  # ---- Spring profile activated in every pod -------------------------------
+  SPRING_PROFILES_ACTIVE: "k8s"
+---
+# =============================================================================
+# CircleGuard - shared Secret
+# -----------------------------------------------------------------------------
+# DEV-ONLY values. In stage/master we'd source these from sealed-secrets,
+# Vault, or the cloud provider's secret manager.
+# =============================================================================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: circleguard-secrets
+  namespace: circleguard
+type: Opaque
+stringData:
+  POSTGRES_USER:     "admin"
+  POSTGRES_PASSWORD: "password"
+  NEO4J_USER:        "neo4j"
+  NEO4J_PASSWORD:    "password"
+  JWT_SIGNING_KEY:   "dev-signing-key-replace-me-in-stage-and-prod"

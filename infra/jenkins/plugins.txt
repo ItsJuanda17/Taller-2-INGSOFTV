@@ -1,0 +1,40 @@
+# =============================================================================
+# Jenkins plugins (installed at image build time by jenkins-plugin-cli)
+# -----------------------------------------------------------------------------
+# Keep this list MINIMAL: only what the CircleGuard pipelines actually use.
+# =============================================================================
+
+# --- Pipeline + UI core ------------------------------------------------------
+workflow-aggregator           # "Pipeline" suite (Jenkinsfile, declarative DSL, ...)
+pipeline-stage-view           # nice "Stage View" on every job page
+blueocean                     # modern UI for pipelines (optional but very helpful)
+
+# --- SCM ---------------------------------------------------------------------
+git
+github
+github-branch-source
+
+# --- Credentials -------------------------------------------------------------
+credentials
+credentials-binding
+plain-credentials
+ssh-credentials
+
+# --- Build agents inside Docker (optional, used for isolated stages) ---------
+docker-workflow               # "agent { docker { image '...' } }" syntax
+
+# --- Reports & quality gates -------------------------------------------------
+junit                         # publish JUnit/Gradle test results
+jacoco                        # code coverage reports (Java)
+htmlpublisher                 # publish Locust HTML reports as build artifacts
+warnings-ng                   # static analysis aggregation (optional)
+
+# --- Kubernetes integration --------------------------------------------------
+kubernetes                    # run pipeline agents as K8s pods (optional)
+kubernetes-cli                # exposes "withKubeConfig" step
+
+# --- Misc utilities ----------------------------------------------------------
+timestamper                   # adds wall-clock timestamps to console logs
+ws-cleanup                    # cleanWs() step
+ansicolor                     # color console output
+build-timeout                 # auto-fail stuck builds
