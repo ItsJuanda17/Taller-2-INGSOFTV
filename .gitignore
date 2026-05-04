@@ -42,6 +42,11 @@ node_modules/
 dist/
 web-build/
 
+# Python bytecode / virtualenvs (Locust suite, helper scripts)
+__pycache__/
+*.pyc
+.venv/
+
 # Docker Local Data
 *_data/
 pgdata/
