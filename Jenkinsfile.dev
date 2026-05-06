@@ -42,6 +42,22 @@ pipeline {
             steps { checkout scm }
         }
 
+        // -- Step 0: pre-warm the Gradle wrapper -------------------------------
+        // The 6 parallel branches below all invoke ./gradlew. On a fresh
+        // Jenkins workspace the wrapper has to download Gradle 8.14
+        // (~150 MB) under an EXCLUSIVE file lock. If 6 workers race for that
+        // lock, five of them time out (the wrapper waits 120 s max).
+        // Running --version once, serially, downloads + installs Gradle into
+        // ~/.gradle/wrapper so the parallel branches just hit the cache.
+        stage('Prepare (warm Gradle)') {
+            steps {
+                sh '''
+                    chmod +x ./gradlew
+                    ./gradlew --version --no-daemon --console=plain
+                '''
+            }
+        }
+
         // -- Step 1: build + test all services in parallel ---------------------
         stage('Build & Test (parallel)') {
             steps {
@@ -51,7 +67,7 @@ pipeline {
                         branches["test:${svc.deployment}"] = {
                             // bootJar then test, separately so failures show up
                             // on the Test stage rather than the Build stage.
-                            sh "chmod +x ./gradlew && ./gradlew :services:${svc.name}:bootJar -x test --no-daemon --console=plain"
+                            sh "./gradlew :services:${svc.name}:bootJar -x test --no-daemon --console=plain"
                             try {
                                 sh "./gradlew :services:${svc.name}:test --no-daemon --console=plain"
                             } finally {
