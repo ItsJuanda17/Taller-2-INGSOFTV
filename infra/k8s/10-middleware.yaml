@@ -16,6 +16,22 @@
 # -----------------------------------------------------------------------------
 # PostgreSQL 16
 # -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: circleguard
+data:
+  # Mounted into /docker-entrypoint-initdb.d so Postgres runs it on first
+  # boot, creating the per-service databases that auth / identity /
+  # promotion / dashboard / form expect.
+  init.sql: |
+    SELECT 'CREATE DATABASE circleguard_auth'      WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'circleguard_auth')\gexec
+    SELECT 'CREATE DATABASE circleguard_identity'  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'circleguard_identity')\gexec
+    SELECT 'CREATE DATABASE circleguard_promotion' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'circleguard_promotion')\gexec
+    SELECT 'CREATE DATABASE circleguard_dashboard' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'circleguard_dashboard')\gexec
+    SELECT 'CREATE DATABASE circleguard_form'      WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'circleguard_form')\gexec
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -41,10 +57,17 @@ spec:
               valueFrom: { secretKeyRef: { name: circleguard-secrets, key: POSTGRES_PASSWORD } }
             - name: POSTGRES_DB
               valueFrom: { configMapKeyRef: { name: circleguard-config, key: POSTGRES_DB } }
+          volumeMounts:
+            - name: init-script
+              mountPath: /docker-entrypoint-initdb.d
           readinessProbe:
             exec: { command: ["pg_isready", "-U", "admin"] }
             initialDelaySeconds: 5
             periodSeconds: 5
+      volumes:
+        - name: init-script
+          configMap:
+            name: postgres-init
 ---
 apiVersion: v1
 kind: Service

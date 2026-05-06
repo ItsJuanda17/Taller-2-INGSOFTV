@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: promotion-service
+  namespace: circleguard
+  labels: { app: promotion-service, tier: backend }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: promotion-service }
+  template:
+    metadata:
+      labels: { app: promotion-service }
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: promotion-service
+          image: circleguard-promotion-service:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8088
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:postgresql://postgres:5432/circleguard_promotion"
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom: { secretKeyRef: { name: circleguard-secrets, key: POSTGRES_USER } }
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom: { secretKeyRef: { name: circleguard-secrets, key: POSTGRES_PASSWORD } }
+            - name: SPRING_NEO4J_URI
+              valueFrom: { configMapKeyRef: { name: circleguard-config, key: NEO4J_URI } }
+            - name: SPRING_NEO4J_AUTHENTICATION_USERNAME
+              valueFrom: { secretKeyRef: { name: circleguard-secrets, key: NEO4J_USER } }
+            - name: SPRING_NEO4J_AUTHENTICATION_PASSWORD
+              valueFrom: { secretKeyRef: { name: circleguard-secrets, key: NEO4J_PASSWORD } }
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+            - name: SPRING_DATA_REDIS_HOST
+              value: "redis"
+            - name: SPRING_DATA_REDIS_PORT
+              value: "6379"
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: circleguard-secrets, key: JWT_SIGNING_KEY } }
+          readinessProbe:
+            tcpSocket: { port: 8088 }
+            initialDelaySeconds: 45
+            periodSeconds: 5
+            failureThreshold: 18
+          livenessProbe:
+            tcpSocket: { port: 8088 }
+            initialDelaySeconds: 120
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: promotion-service
+  namespace: circleguard
+spec:
+  type: NodePort   # see auth-service.yaml for rationale
+  selector: { app: promotion-service }
+  ports:
+    - { name: http, port: 8088, targetPort: 8088, nodePort: 30088 }

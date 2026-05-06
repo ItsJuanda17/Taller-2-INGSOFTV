@@ -1,0 +1,115 @@
+// =============================================================================
+// CircleGuard - circleguard-auth-service DEV pipeline
+// -----------------------------------------------------------------------------
+// One declarative pipeline per microservice (Punto 2 of Taller 2). Each one:
+//   1. Builds the Spring Boot fat-jar with Gradle (no tests yet).
+//   2. Runs the unit + integration test suite, publishing JUnit results.
+//   3. Builds the Docker image (build context = repo root) tagged
+//      "circleguard-auth-service:dev-<BUILD_NUMBER>" AND "...:dev".
+//   4. Patches the K8s deployment with the unique tag so K8s rolls a new pod.
+//   5. Smoke-tests the service from inside the cluster (curl the port).
+//
+// Image lives ONLY in the local Docker Desktop daemon — no registry push.
+// K8s finds it because the daemon is shared with the K8s nodes.
+// =============================================================================
+pipeline {
+    agent any
+
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        timestamps()
+        ansiColor('xterm')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        SERVICE       = 'circleguard-auth-service'
+        DEPLOYMENT    = 'auth-service'
+        PORT          = '8180'
+        NAMESPACE     = 'circleguard'
+        IMAGE_TAG     = "dev-${env.BUILD_NUMBER}"
+        IMAGE         = "circleguard-auth-service:${IMAGE_TAG}"
+        IMAGE_FLOATING = "circleguard-auth-service:dev"
+        KUBECONFIG    = "/var/jenkins_home/.kube/config"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps { checkout scm }
+        }
+
+        stage('Build (gradle bootJar)') {
+            steps {
+                sh '''
+                    chmod +x ./gradlew
+                    ./gradlew :services:circleguard-auth-service:bootJar -x test --no-daemon --console=plain
+                '''
+            }
+        }
+
+        stage('Test (unit + integration)') {
+            steps {
+                sh './gradlew :services:circleguard-auth-service:test --no-daemon --console=plain'
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true,
+                          testResults: 'services/circleguard-auth-service/build/test-results/test/*.xml'
+                }
+            }
+        }
+
+        stage('Docker build') {
+            steps {
+                sh '''
+                    docker build \
+                      -f services/circleguard-auth-service/Dockerfile \
+                      -t ${IMAGE} \
+                      -t ${IMAGE_FLOATING} \
+                      .
+                '''
+            }
+        }
+
+        stage('Deploy to K8s (DEV)') {
+            steps {
+                sh '''
+                    # Make sure the Deployment + Service exist (idempotent).
+                    kubectl --kubeconfig=${KUBECONFIG} apply -f infra/k8s/services/auth-service.yaml
+
+                    # Roll the deployment to the freshly-built tag. set image
+                    # is the recommended way to trigger a rolling update from
+                    # a CI tag.
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \
+                      set image deployment/${DEPLOYMENT} ${DEPLOYMENT}=${IMAGE}
+
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \
+                      rollout status deployment/${DEPLOYMENT} --timeout=3m
+                '''
+            }
+        }
+
+        stage('Smoke') {
+            steps {
+                // Run a curl from a throwaway pod inside the namespace so we
+                // don't depend on port-forward / external networking.
+                sh '''
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \
+                      run smoke-${BUILD_NUMBER} \
+                      --image=curlimages/curl --restart=Never --rm -i --quiet \
+                      --command -- \
+                      curl -s -o /dev/null -w "HTTP %{http_code} from ${DEPLOYMENT}\\n" \
+                      --max-time 5 \
+                      http://${DEPLOYMENT}.${NAMESPACE}.svc.cluster.local:${PORT}/api/v1/auth/qr/generate
+                '''
+            }
+        }
+    }
+
+    post {
+        success { echo "✅ ${SERVICE} deployed as ${IMAGE} into ${NAMESPACE}" }
+        failure { echo "❌ ${SERVICE} pipeline failed at build #${BUILD_NUMBER}" }
+        always  { sh 'docker image prune -f --filter "dangling=true" || true' }
+    }
+}

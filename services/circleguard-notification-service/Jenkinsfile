@@ -1,0 +1,96 @@
+// Mirror of services/circleguard-auth-service/Jenkinsfile, retargeted at
+// circleguard-notification-service (port 8082). See that file's header for
+// the full rationale of each stage.
+pipeline {
+    agent any
+
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        timestamps()
+        ansiColor('xterm')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        SERVICE        = 'circleguard-notification-service'
+        DEPLOYMENT     = 'notification-service'
+        PORT           = '8082'
+        NAMESPACE      = 'circleguard'
+        IMAGE_TAG      = "dev-${env.BUILD_NUMBER}"
+        IMAGE          = "circleguard-notification-service:${IMAGE_TAG}"
+        IMAGE_FLOATING = "circleguard-notification-service:dev"
+        KUBECONFIG     = "/var/jenkins_home/.kube/config"
+    }
+
+    stages {
+        stage('Checkout') { steps { checkout scm } }
+
+        stage('Build (gradle bootJar)') {
+            steps {
+                sh '''
+                    chmod +x ./gradlew
+                    ./gradlew :services:circleguard-notification-service:bootJar -x test --no-daemon --console=plain
+                '''
+            }
+        }
+
+        stage('Test (unit + integration)') {
+            steps {
+                sh './gradlew :services:circleguard-notification-service:test --no-daemon --console=plain'
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true,
+                          testResults: 'services/circleguard-notification-service/build/test-results/test/*.xml'
+                }
+            }
+        }
+
+        stage('Docker build') {
+            steps {
+                sh '''
+                    docker build \
+                      -f services/circleguard-notification-service/Dockerfile \
+                      -t ${IMAGE} \
+                      -t ${IMAGE_FLOATING} \
+                      .
+                '''
+            }
+        }
+
+        stage('Deploy to K8s (DEV)') {
+            steps {
+                sh '''
+                    kubectl --kubeconfig=${KUBECONFIG} apply -f infra/k8s/services/notification-service.yaml
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \
+                      set image deployment/${DEPLOYMENT} ${DEPLOYMENT}=${IMAGE}
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \
+                      rollout status deployment/${DEPLOYMENT} --timeout=3m
+                '''
+            }
+        }
+
+        stage('Smoke') {
+            steps {
+                // notification-service exposes no HTTP endpoints (Kafka-only),
+                // so the smoke test just verifies the TCP port is accepting
+                // connections — proof that the listeners booted and the JVM
+                // didn't crash.
+                sh '''
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \
+                      run smoke-${BUILD_NUMBER} \
+                      --image=curlimages/curl --restart=Never --rm -i --quiet \
+                      --command -- \
+                      sh -c "nc -z ${DEPLOYMENT}.${NAMESPACE}.svc.cluster.local ${PORT} && echo OK"
+                '''
+            }
+        }
+    }
+
+    post {
+        success { echo "✅ ${SERVICE} deployed as ${IMAGE} into ${NAMESPACE}" }
+        failure { echo "❌ ${SERVICE} pipeline failed at build #${BUILD_NUMBER}" }
+        always  { sh 'docker image prune -f --filter "dangling=true" || true' }
+    }
+}

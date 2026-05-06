@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard-service
+  namespace: circleguard
+  labels: { app: dashboard-service, tier: backend }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: dashboard-service }
+  template:
+    metadata:
+      labels: { app: dashboard-service }
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: dashboard-service
+          image: circleguard-dashboard-service:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8084
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:postgresql://postgres:5432/circleguard_dashboard"
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom: { secretKeyRef: { name: circleguard-secrets, key: POSTGRES_USER } }
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom: { secretKeyRef: { name: circleguard-secrets, key: POSTGRES_PASSWORD } }
+            # Dashboard's PromotionClient reads this URL via @Value.
+            - name: CIRCLEGUARD_PROMOTION_SERVICE_URL
+              valueFrom: { configMapKeyRef: { name: circleguard-config, key: CIRCLEGUARD_PROMOTION_SERVICE_URL } }
+          readinessProbe:
+            tcpSocket: { port: 8084 }
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket: { port: 8084 }
+            initialDelaySeconds: 90
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard-service
+  namespace: circleguard
+spec:
+  type: NodePort   # see auth-service.yaml for rationale
+  selector: { app: dashboard-service }
+  ports:
+    - { name: http, port: 8084, targetPort: 8084, nodePort: 30084 }

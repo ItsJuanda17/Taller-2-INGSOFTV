@@ -1,0 +1,98 @@
+// Mirror of services/circleguard-auth-service/Jenkinsfile, retargeted at
+// circleguard-identity-service (port 8083). See that file's header for the
+// full rationale of each stage.
+pipeline {
+    agent any
+
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        timestamps()
+        ansiColor('xterm')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        SERVICE        = 'circleguard-identity-service'
+        DEPLOYMENT     = 'identity-service'
+        PORT           = '8083'
+        NAMESPACE      = 'circleguard'
+        IMAGE_TAG      = "dev-${env.BUILD_NUMBER}"
+        IMAGE          = "circleguard-identity-service:${IMAGE_TAG}"
+        IMAGE_FLOATING = "circleguard-identity-service:dev"
+        KUBECONFIG     = "/var/jenkins_home/.kube/config"
+    }
+
+    stages {
+        stage('Checkout') { steps { checkout scm } }
+
+        stage('Build (gradle bootJar)') {
+            steps {
+                sh '''
+                    chmod +x ./gradlew
+                    ./gradlew :services:circleguard-identity-service:bootJar -x test --no-daemon --console=plain
+                '''
+            }
+        }
+
+        stage('Test (unit + integration)') {
+            steps {
+                sh './gradlew :services:circleguard-identity-service:test --no-daemon --console=plain'
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true,
+                          testResults: 'services/circleguard-identity-service/build/test-results/test/*.xml'
+                }
+            }
+        }
+
+        stage('Docker build') {
+            steps {
+                sh '''
+                    docker build \
+                      -f services/circleguard-identity-service/Dockerfile \
+                      -t ${IMAGE} \
+                      -t ${IMAGE_FLOATING} \
+                      .
+                '''
+            }
+        }
+
+        stage('Deploy to K8s (DEV)') {
+            steps {
+                sh '''
+                    kubectl --kubeconfig=${KUBECONFIG} apply -f infra/k8s/services/identity-service.yaml
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \
+                      set image deployment/${DEPLOYMENT} ${DEPLOYMENT}=${IMAGE}
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \
+                      rollout status deployment/${DEPLOYMENT} --timeout=3m
+                '''
+            }
+        }
+
+        stage('Smoke') {
+            steps {
+                // POST a visitor registration — exercises Postgres + the
+                // encryption converter end-to-end inside the cluster.
+                sh '''
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \
+                      run smoke-${BUILD_NUMBER} \
+                      --image=curlimages/curl --restart=Never --rm -i --quiet \
+                      --command -- \
+                      curl -s -o /dev/null -w "HTTP %{http_code} from ${DEPLOYMENT}\\n" \
+                      --max-time 5 \
+                      -H "Content-Type: application/json" \
+                      -d '{"name":"smoke","email":"smoke@example.org","reason_for_visit":"ci"}' \
+                      http://${DEPLOYMENT}.${NAMESPACE}.svc.cluster.local:${PORT}/api/v1/identities/visitor
+                '''
+            }
+        }
+    }
+
+    post {
+        success { echo "✅ ${SERVICE} deployed as ${IMAGE} into ${NAMESPACE}" }
+        failure { echo "❌ ${SERVICE} pipeline failed at build #${BUILD_NUMBER}" }
+        always  { sh 'docker image prune -f --filter "dangling=true" || true' }
+    }
+}

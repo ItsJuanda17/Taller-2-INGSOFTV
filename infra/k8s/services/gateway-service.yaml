@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-service
+  namespace: circleguard
+  labels: { app: gateway-service, tier: backend }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: gateway-service }
+  template:
+    metadata:
+      labels: { app: gateway-service }
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: gateway-service
+          image: circleguard-gateway-service:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8087
+          env:
+            - name: SPRING_DATA_REDIS_HOST
+              value: "redis"
+            - name: SPRING_DATA_REDIS_PORT
+              value: "6379"
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: circleguard-secrets, key: JWT_SIGNING_KEY } }
+            # qr.secret has its own key in dev; pinning it here so issued QRs
+            # validate consistently across auth + gateway pods.
+            - name: QR_SECRET
+              value: "my-qr-secret-key-for-dev-1234567890"
+          readinessProbe:
+            tcpSocket: { port: 8087 }
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket: { port: 8087 }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-service
+  namespace: circleguard
+spec:
+  type: NodePort   # see auth-service.yaml for rationale
+  selector: { app: gateway-service }
+  ports:
+    - { name: http, port: 8087, targetPort: 8087, nodePort: 30087 }

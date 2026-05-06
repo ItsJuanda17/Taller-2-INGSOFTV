@@ -1,0 +1,95 @@
+// Mirror of services/circleguard-auth-service/Jenkinsfile, retargeted at
+// circleguard-promotion-service (port 8088). See that file's header for the
+// full rationale of each stage.
+pipeline {
+    agent any
+
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        timestamps()
+        ansiColor('xterm')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        SERVICE        = 'circleguard-promotion-service'
+        DEPLOYMENT     = 'promotion-service'
+        PORT           = '8088'
+        NAMESPACE      = 'circleguard'
+        IMAGE_TAG      = "dev-${env.BUILD_NUMBER}"
+        IMAGE          = "circleguard-promotion-service:${IMAGE_TAG}"
+        IMAGE_FLOATING = "circleguard-promotion-service:dev"
+        KUBECONFIG     = "/var/jenkins_home/.kube/config"
+    }
+
+    stages {
+        stage('Checkout') { steps { checkout scm } }
+
+        stage('Build (gradle bootJar)') {
+            steps {
+                sh '''
+                    chmod +x ./gradlew
+                    ./gradlew :services:circleguard-promotion-service:bootJar -x test --no-daemon --console=plain
+                '''
+            }
+        }
+
+        stage('Test (unit + integration)') {
+            steps {
+                sh './gradlew :services:circleguard-promotion-service:test --no-daemon --console=plain'
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true,
+                          testResults: 'services/circleguard-promotion-service/build/test-results/test/*.xml'
+                }
+            }
+        }
+
+        stage('Docker build') {
+            steps {
+                sh '''
+                    docker build \
+                      -f services/circleguard-promotion-service/Dockerfile \
+                      -t ${IMAGE} \
+                      -t ${IMAGE_FLOATING} \
+                      .
+                '''
+            }
+        }
+
+        stage('Deploy to K8s (DEV)') {
+            steps {
+                sh '''
+                    kubectl --kubeconfig=${KUBECONFIG} apply -f infra/k8s/services/promotion-service.yaml
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \
+                      set image deployment/${DEPLOYMENT} ${DEPLOYMENT}=${IMAGE}
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \
+                      rollout status deployment/${DEPLOYMENT} --timeout=3m
+                '''
+            }
+        }
+
+        stage('Smoke') {
+            steps {
+                // /api/v1/buildings is a public GET — proves Postgres is wired.
+                sh '''
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \
+                      run smoke-${BUILD_NUMBER} \
+                      --image=curlimages/curl --restart=Never --rm -i --quiet \
+                      --command -- \
+                      curl -s -o /dev/null -w "HTTP %{http_code} from ${DEPLOYMENT}\\n" \
+                      --max-time 5 \
+                      http://${DEPLOYMENT}.${NAMESPACE}.svc.cluster.local:${PORT}/api/v1/buildings
+                '''
+            }
+        }
+    }
+
+    post {
+        success { echo "✅ ${SERVICE} deployed as ${IMAGE} into ${NAMESPACE}" }
+        failure { echo "❌ ${SERVICE} pipeline failed at build #${BUILD_NUMBER}" }
+        always  { sh 'docker image prune -f --filter "dangling=true" || true' }
+    }
+}
