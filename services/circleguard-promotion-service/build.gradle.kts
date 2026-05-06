@@ -60,6 +60,13 @@ tasks.withType<Test> {
     // containers will be cleaned up by the next prune.
     environment("TESTCONTAINERS_RYUK_DISABLED", "true")
     environment("TESTCONTAINERS_CHECKS_DISABLE", "true")
+    // After Testcontainers spawns Neo4j/Redis, it polls the published port
+    // to verify readiness. By default it polls "localhost", but the test
+    // JVM lives in the Jenkins container, where localhost is NOT the host.
+    // Pointing the host override at host.docker.internal (auto-provided by
+    // Docker Desktop in every container) makes the polling reach the right
+    // host. The same value works on Windows local — it's the same alias.
+    environment("TESTCONTAINERS_HOST_OVERRIDE", "host.docker.internal")
     if (System.getProperty("os.name").startsWith("Windows")) {
         environment("DOCKER_HOST", "npipe:////./pipe/docker_engine_linux")
     } else {
