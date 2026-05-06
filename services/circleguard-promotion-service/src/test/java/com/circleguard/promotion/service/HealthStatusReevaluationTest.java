@@ -9,6 +9,7 @@ import org.springframework.data.neo4j.core.Neo4jClient;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Neo4jContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -16,19 +17,42 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-@SpringBootTest
+// The full Spring context tries to connect to Postgres and Kafka on boot.
+// We give it an in-memory H2 (no real Postgres needed for these Neo4j-only
+// tests), turn off Flyway, and prevent @KafkaListener beans from starting
+// their consumer threads. KafkaTemplate is still @MockBean'd below.
+@SpringBootTest(properties = {
+        "spring.datasource.url=jdbc:h2:mem:testdb;MODE=PostgreSQL",
+        "spring.datasource.driver-class-name=org.h2.Driver",
+        "spring.datasource.username=sa",
+        "spring.datasource.password=",
+        "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect",
+        "spring.jpa.hibernate.ddl-auto=create-drop",
+        "spring.flyway.enabled=false",
+        "spring.kafka.listener.auto-startup=false"
+})
 @Testcontainers
 public class HealthStatusReevaluationTest {
 
     @Container
-    static Neo4jContainer<?> neo4jContainer = new Neo4jContainer<>("neo4j:5.12")
+    // Aligned with infra/k8s/10-middleware.yaml so the same image is reused
+    // by the cluster, the integration suites, and any CI cache.
+    static Neo4jContainer<?> neo4jContainer = new Neo4jContainer<>("neo4j:5.26")
             .withAdminPassword("password");
 
+    @Container
+    // Promotion service has @Cacheable beans backed by Redis. Without a real
+    // Redis, lettuce fails to connect at context load and aborts the test.
+    static GenericContainer<?> redisContainer = new GenericContainer<>("redis:7.2")
+            .withExposedPorts(6379);
+
     @DynamicPropertySource
-    static void neo4jProperties(DynamicPropertyRegistry registry) {
+    static void backendProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.neo4j.uri", neo4jContainer::getBoltUrl);
         registry.add("spring.neo4j.authentication.username", () -> "neo4j");
         registry.add("spring.neo4j.authentication.password", () -> "password");
+        registry.add("spring.data.redis.host", redisContainer::getHost);
+        registry.add("spring.data.redis.port", redisContainer::getFirstMappedPort);
     }
 
     @Autowired

@@ -19,16 +19,31 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest
+// Same reason as HealthStatusReevaluationTest: the production context
+// requires Postgres + Kafka, and these tests only ship Neo4j + Redis
+// containers, so we mock the rest of the world via H2 + disabled listeners.
+@SpringBootTest(properties = {
+        "spring.datasource.url=jdbc:h2:mem:testdb;MODE=PostgreSQL",
+        "spring.datasource.driver-class-name=org.h2.Driver",
+        "spring.datasource.username=sa",
+        "spring.datasource.password=",
+        "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect",
+        "spring.jpa.hibernate.ddl-auto=create-drop",
+        "spring.flyway.enabled=false",
+        "spring.kafka.listener.auto-startup=false"
+})
 @Testcontainers
 public class AdministrativeCorrectionTest {
 
     @Container
-    static Neo4jContainer<?> neo4j = new Neo4jContainer<>("neo4j:5.12.0")
+    // Aligned with infra/k8s/10-middleware.yaml so the same image is reused
+    // by the cluster, the integration suites, and any CI cache.
+    static Neo4jContainer<?> neo4j = new Neo4jContainer<>("neo4j:5.26")
             .withAdminPassword("password");
 
     @Container
-    static GenericContainer<?> redis = new GenericContainer<>("redis:7.2.1")
+    // Same alignment with infra/k8s/10-middleware.yaml.
+    static GenericContainer<?> redis = new GenericContainer<>("redis:7.2")
             .withExposedPorts(6379);
 
     @DynamicPropertySource

@@ -26,7 +26,11 @@ class HealthStatusControllerTest {
     private HealthStatusService statusService;
 
     @Test
-    @WithMockUser(authorities = "HEALTH_CENTER")
+    // Controller uses @PreAuthorize("hasRole('HEALTH_CENTER')"), which checks
+    // for the authority "ROLE_HEALTH_CENTER". @WithMockUser(roles=...) prefixes
+    // the value with ROLE_ automatically; using authorities="HEALTH_CENTER"
+    // (without ROLE_) would yield 403.
+    @WithMockUser(roles = "HEALTH_CENTER")
     void confirmPositive_WithPermission_CallsUpdateStatus() throws Exception {
         String json = "{\"anonymousId\": \"user-1\"}";
 
@@ -39,7 +43,7 @@ class HealthStatusControllerTest {
     }
 
     @Test
-    @WithMockUser(authorities = "HEALTH_CENTER")
+    @WithMockUser(roles = "HEALTH_CENTER")
     void resolve_WithPermission_CallsResolveStatus() throws Exception {
         String json = "{\"anonymousId\": \"user-1\"}";
 
