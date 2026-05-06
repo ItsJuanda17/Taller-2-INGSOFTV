@@ -38,20 +38,23 @@ dependencies {
     testImplementation("com.github.docker-java:docker-java-transport-zerodep:3.4.0")
 }
 
-// Testcontainers on Windows + Docker Desktop:
-//   - The default "docker_engine" pipe is a redirect stub on recent Docker
-//     Desktop builds. The actual Linux daemon lives at "docker_engine_linux".
-//   - The docker-java client bundled with Testcontainers 1.19.x requests API
-//     version 1.32 by default; the modern Docker Desktop daemon rejects
-//     anything below 1.40, so we pin DOCKER_API_VERSION explicitly.
-// Linux/macOS keep the default UNIX-socket discovery and need no overrides.
+// Pin the Docker API version + force the right host on each platform so
+// Testcontainers always finds the daemon. docker-java 3.4.0 still hard-codes
+// API "1.32" as the fallback when it cannot resolve a version, and the
+// modern Docker daemon rejects that with HTTP 400.
+//   - Windows: the default "docker_engine" named pipe is a redirect stub on
+//     recent Docker Desktop builds; the actual Linux daemon lives at
+//     "docker_engine_linux".
+//   - Linux (Jenkins runs there): force the Unix socket explicitly so the
+//     docker-java client doesn't fall back to its legacy tcp://127.0.0.1:2375
+//     default — the Jenkins container has /var/run/docker.sock bind-mounted
+//     from the host but no exposed TCP daemon.
 tasks.withType<Test> {
+    systemProperty("api.version", "1.43")
+    environment("DOCKER_API_VERSION", "1.43")
     if (System.getProperty("os.name").startsWith("Windows")) {
         environment("DOCKER_HOST", "npipe:////./pipe/docker_engine_linux")
-        environment("DOCKER_API_VERSION", "1.43")
-        // docker-java 3.4.0 still hard-codes API "1.32" as the fallback when
-        // it cannot resolve a version; set the system property the client
-        // reads (api.version) so it negotiates ≥ 1.40 with Docker Desktop.
-        systemProperty("api.version", "1.43")
+    } else {
+        environment("DOCKER_HOST", "unix:///var/run/docker.sock")
     }
 }

@@ -42,13 +42,19 @@ dependencies {
 }
 
 // Pin the Docker API version used by docker-java's negotiation. Without this
-// the client advertises 1.32 and modern daemons reply with HTTP 400. On
-// Windows we additionally point Testcontainers at the real WSL2 engine pipe
-// (the default "docker_engine" pipe is a Docker Desktop redirect stub).
+// the client advertises 1.32 and modern daemons reply with HTTP 400.
+//   - Windows: point Testcontainers at the real WSL2 engine pipe (the default
+//     "docker_engine" pipe is a Docker Desktop redirect stub).
+//   - Linux (Jenkins runs here): force the Unix socket explicitly so the
+//     docker-java client doesn't fall back to its legacy tcp://127.0.0.1:2375
+//     default — the Jenkins container has the host socket bind-mounted at
+//     /var/run/docker.sock but no exposed TCP daemon.
 tasks.withType<Test> {
     systemProperty("api.version", "1.43")
+    environment("DOCKER_API_VERSION", "1.43")
     if (System.getProperty("os.name").startsWith("Windows")) {
         environment("DOCKER_HOST", "npipe:////./pipe/docker_engine_linux")
-        environment("DOCKER_API_VERSION", "1.43")
+    } else {
+        environment("DOCKER_HOST", "unix:///var/run/docker.sock")
     }
 }
