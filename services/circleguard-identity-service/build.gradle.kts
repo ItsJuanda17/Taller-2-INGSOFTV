@@ -52,6 +52,14 @@ dependencies {
 tasks.withType<Test> {
     systemProperty("api.version", "1.43")
     environment("DOCKER_API_VERSION", "1.43")
+    // Ryuk is the small helper container Testcontainers spawns to garbage-
+    // collect containers if the test JVM dies. When the JVM itself runs
+    // INSIDE another container (e.g. Jenkins), Ryuk publishes its port on
+    // the Docker bridge IP (172.17.0.1) which the in-container JVM cannot
+    // route to. Disabling Ryuk skips that handshake; orphaned test
+    // containers will be cleaned up by the next prune.
+    environment("TESTCONTAINERS_RYUK_DISABLED", "true")
+    environment("TESTCONTAINERS_CHECKS_DISABLE", "true")
     if (System.getProperty("os.name").startsWith("Windows")) {
         environment("DOCKER_HOST", "npipe:////./pipe/docker_engine_linux")
     } else {
