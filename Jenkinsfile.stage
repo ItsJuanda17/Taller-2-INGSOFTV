@@ -1,0 +1,212 @@
+@groovy.transform.Field
+final List<Map> SERVICES = [
+    [name: 'circleguard-auth-service',         deployment: 'auth-service',         port: '8180', smokePath: '/api/v1/auth/qr/generate', smokeMethod: 'GET',  smokeBody: '' ],
+    [name: 'circleguard-identity-service',     deployment: 'identity-service',     port: '8083', smokePath: '/api/v1/identities/visitor', smokeMethod: 'POST', smokeBody: '{"name":"smoke","email":"s@x.org","reason_for_visit":"ci"}' ],
+    [name: 'circleguard-promotion-service',    deployment: 'promotion-service',    port: '8088', smokePath: '/api/v1/buildings', smokeMethod: 'GET',  smokeBody: '' ],
+    [name: 'circleguard-dashboard-service',    deployment: 'dashboard-service',    port: '8084', smokePath: '/api/v1/analytics/health-board', smokeMethod: 'GET',  smokeBody: '' ],
+    [name: 'circleguard-gateway-service',      deployment: 'gateway-service',      port: '8087', smokePath: '/api/v1/gate/validate', smokeMethod: 'POST', smokeBody: '{"token":"invalid"}' ],
+    [name: 'circleguard-notification-service', deployment: 'notification-service', port: '8082', smokePath: '',                                smokeMethod: 'TCP',  smokeBody: '' ],
+]
+
+pipeline {
+    agent any
+
+    options {
+        timeout(time: 90, unit: 'MINUTES')
+        timestamps()
+        ansiColor('xterm')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        NAMESPACE  = 'circleguard'
+        IMAGE_TAG  = "stage-${env.BUILD_NUMBER}"
+        KUBECONFIG = "/var/jenkins_home/.kube/config"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps { checkout scm }
+        }
+
+        stage('Prepare (warm Gradle)') {
+            steps {
+                sh '''
+                    chmod +x ./gradlew
+                    ./gradlew --version --no-daemon --console=plain
+                '''
+            }
+        }
+
+        stage('Build & Test (parallel)') {
+            steps {
+                script {
+                    def branches = [:]
+                    SERVICES.each { svc ->
+                        branches["test:${svc.deployment}"] = {
+                            sh "./gradlew :services:${svc.name}:bootJar -x test --no-daemon --console=plain"
+                            try {
+                                sh "./gradlew :services:${svc.name}:test --no-daemon --console=plain"
+                            } finally {
+                                junit allowEmptyResults: true,
+                                      testResults: "services/${svc.name}/build/test-results/test/*.xml"
+                            }
+                        }
+                    }
+                    parallel branches
+                }
+            }
+        }
+
+        stage('Docker build (parallel)') {
+            steps {
+                script {
+                    def branches = [:]
+                    SERVICES.each { svc ->
+                        branches["docker:${svc.deployment}"] = {
+                            sh """
+                                docker build \\
+                                  -f services/${svc.name}/Dockerfile \\
+                                  -t ${svc.name}:${IMAGE_TAG} \\
+                                  -t ${svc.name}:stage \\
+                                  -t ${svc.name}:dev \\
+                                  .
+                            """
+                        }
+                    }
+                    parallel branches
+                }
+            }
+        }
+
+        stage('Approve STAGE deploy') {
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    input message: 'Promote build to STAGE?',
+                          ok: 'Deploy to STAGE'
+                }
+            }
+        }
+
+        stage('Deploy to K8s (parallel)') {
+            steps {
+                script {
+                    def branches = [:]
+                    SERVICES.each { svc ->
+                        branches["deploy:${svc.deployment}"] = {
+                            sh """
+                                set -e
+                                kubectl --kubeconfig=${KUBECONFIG} apply -f infra/k8s/services/${svc.deployment}.yaml
+                                kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \\
+                                  set image deployment/${svc.deployment} ${svc.deployment}=${svc.name}:${IMAGE_TAG}
+                                if ! kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \\
+                                       rollout status deployment/${svc.deployment} --timeout=8m ; then
+                                    echo '----- FAILURE DIAGNOSTICS for ${svc.deployment} -----'
+                                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} get pods -l app=${svc.deployment} -o wide || true
+                                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} describe deployment/${svc.deployment} || true
+                                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} describe pods -l app=${svc.deployment} || true
+                                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} logs -l app=${svc.deployment} --tail=80 --all-containers || true
+                                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} get events --sort-by=.lastTimestamp | tail -40 || true
+                                    exit 1
+                                fi
+                            """
+                        }
+                    }
+                    parallel branches
+                }
+            }
+        }
+
+        stage('Smoke (parallel)') {
+            steps {
+                script {
+                    def branches = [:]
+                    SERVICES.each { svc ->
+                        branches["smoke:${svc.deployment}"] = {
+                            if (svc.smokeMethod == 'TCP') {
+                                sh """
+                                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \\
+                                      run smoke-stage-${svc.deployment}-${BUILD_NUMBER} \\
+                                      --image=curlimages/curl --restart=Never --rm -i --quiet \\
+                                      --command -- \\
+                                      sh -c "nc -z ${svc.deployment}.${NAMESPACE}.svc.cluster.local ${svc.port} && echo OK"
+                                """
+                            } else if (svc.smokeMethod == 'GET') {
+                                sh """
+                                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \\
+                                      run smoke-stage-${svc.deployment}-${BUILD_NUMBER} \\
+                                      --image=curlimages/curl --restart=Never --rm -i --quiet \\
+                                      --command -- \\
+                                      curl -s -o /dev/null -w "HTTP %{http_code} from ${svc.deployment}\\n" \\
+                                      --max-time 5 \\
+                                      http://${svc.deployment}.${NAMESPACE}.svc.cluster.local:${svc.port}${svc.smokePath}
+                                """
+                            } else {
+                                sh """
+                                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} \\
+                                      run smoke-stage-${svc.deployment}-${BUILD_NUMBER} \\
+                                      --image=curlimages/curl --restart=Never --rm -i --quiet \\
+                                      --command -- \\
+                                      curl -s -o /dev/null -w "HTTP %{http_code} from ${svc.deployment}\\n" \\
+                                      --max-time 5 \\
+                                      -H "Content-Type: application/json" \\
+                                      -d '${svc.smokeBody}' \\
+                                      http://${svc.deployment}.${NAMESPACE}.svc.cluster.local:${svc.port}${svc.smokePath}
+                                """
+                            }
+                        }
+                    }
+                    parallel branches
+                }
+            }
+        }
+
+        stage('E2E (REST Assured) — strict') {
+            steps {
+                sh '''
+                    AUTH_URL=http://host.docker.internal:30180 \
+                    IDENTITY_URL=http://host.docker.internal:30083 \
+                    PROMOTION_URL=http://host.docker.internal:30088 \
+                    DASHBOARD_URL=http://host.docker.internal:30084 \
+                    GATEWAY_URL=http://host.docker.internal:30087 \
+                    NOTIFICATION_URL=http://host.docker.internal:30082 \
+                    JWT_SECRET="$(kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} get secret circleguard-secrets -o jsonpath='{.data.JWT_SIGNING_KEY}' | base64 -d)" \
+                    ./gradlew :tests:e2e:test --no-daemon --console=plain
+                '''
+            }
+            post {
+                always {
+                    junit allowEmptyResults: false,
+                          testResults: 'tests/e2e/build/test-results/test/*.xml'
+                }
+            }
+        }
+
+        stage('Locust load test (5 min, 50 users)') {
+            steps {
+                sh '''
+                    docker build -f tests/performance/Dockerfile -t circleguard-locust:stage .
+                    rm -rf locust-reports && mkdir -p locust-reports
+                    docker run --rm \
+                      -e CIRCLEGUARD_AUTH_SERVICE_URL=http://host.docker.internal:30180 \
+                      -e CIRCLEGUARD_IDENTITY_SERVICE_URL=http://host.docker.internal:30083 \
+                      -e CIRCLEGUARD_PROMOTION_SERVICE_URL=http://host.docker.internal:30088 \
+                      -e CIRCLEGUARD_DASHBOARD_SERVICE_URL=http://host.docker.internal:30084 \
+                      -e CIRCLEGUARD_GATEWAY_SERVICE_URL=http://host.docker.internal:30087 \
+                      -v ${PWD}/locust-reports:/reports \
+                      circleguard-locust:stage \
+                      -u 50 -r 10 -t 5m \
+                      --csv /reports/stage --html /reports/stage.html
+                '''
+                archiveArtifacts artifacts: 'locust-reports/**', allowEmptyArchive: false
+            }
+        }
+    }
+
+    post {
+        success { echo "STAGE pipeline succeeded - Build #${BUILD_NUMBER}" }
+        failure { echo "STAGE pipeline failed at build #${BUILD_NUMBER}" }
+        always  { sh 'docker image prune -f --filter "dangling=true" || true' }
+    }
+}
