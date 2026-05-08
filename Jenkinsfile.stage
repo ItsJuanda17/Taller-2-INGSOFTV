@@ -39,22 +39,20 @@ pipeline {
             }
         }
 
-        stage('Build & Test (parallel)') {
+        stage('Build & Test (sequential)') {
             steps {
                 script {
-                    def branches = [:]
                     SERVICES.each { svc ->
-                        branches["test:${svc.deployment}"] = {
+                        stage("test:${svc.deployment}") {
                             sh "./gradlew :services:${svc.name}:bootJar -x test --no-daemon --console=plain"
                             try {
                                 sh "./gradlew :services:${svc.name}:test --no-daemon --console=plain"
                             } finally {
-                                junit allowEmptyResults: true,
+                                junit allowEmptyResults: false,
                                       testResults: "services/${svc.name}/build/test-results/test/*.xml"
                             }
                         }
                     }
-                    parallel branches
                 }
             }
         }
