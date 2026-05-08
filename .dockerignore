@@ -5,12 +5,16 @@
 # =============================================================================
 
 # --- Gradle / Java build outputs ---
+# Block everything under build/ EXCEPT the per-service libs/ folder so the
+# slim Dockerfiles can pick up the bootJar produced by the test stage.
 **/build/
+!services/*/build/
+services/*/build/*
+!services/*/build/libs/
 **/.gradle/
 **/bin/
 **/out/
 *.class
-*.jar
 *.war
 
 # --- IDE / editor ---
