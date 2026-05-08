@@ -40,14 +40,18 @@ spec:
               value: "6379"
             - name: JWT_SECRET
               valueFrom: { secretKeyRef: { name: circleguard-secrets, key: JWT_SIGNING_KEY } }
+          # Promotion is the heaviest service: it wires up Postgres + Neo4j +
+          # Kafka + Redis at boot. Keep the readiness window generous so the
+          # rollout doesn't fight with Spring Boot's startup time.
+          # readiness budget: 60 + 5*36 = 240 s before the pod is marked unready.
           readinessProbe:
             tcpSocket: { port: 8088 }
-            initialDelaySeconds: 45
+            initialDelaySeconds: 60
             periodSeconds: 5
-            failureThreshold: 18
+            failureThreshold: 36
           livenessProbe:
             tcpSocket: { port: 8088 }
-            initialDelaySeconds: 120
+            initialDelaySeconds: 180
             periodSeconds: 20
 ---
 apiVersion: v1
