@@ -80,15 +80,6 @@ pipeline {
             }
         }
 
-        stage('Approve STAGE deploy') {
-            steps {
-                timeout(time: 10, unit: 'MINUTES') {
-                    input message: 'Promote build to STAGE?',
-                          ok: 'Deploy to STAGE'
-                }
-            }
-        }
-
         stage('Deploy to K8s (parallel)') {
             steps {
                 script {
