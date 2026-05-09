@@ -20,9 +20,12 @@ pipeline {
     }
 
     environment {
-        NAMESPACE  = 'circleguard'
-        IMAGE_TAG  = "stage-${env.BUILD_NUMBER}"
-        KUBECONFIG = "/var/jenkins_home/.kube/config"
+        NAMESPACE       = 'circleguard'
+        IMAGE_TAG       = "stage-${env.BUILD_NUMBER}"
+        KUBECONFIG      = "/var/jenkins_home/.kube/config"
+        LOCUST_USERS    = '30'
+        LOCUST_SPAWN    = '5'
+        LOCUST_DURATION = '5m'
     }
 
     stages {
@@ -172,7 +175,7 @@ pipeline {
             }
         }
 
-        stage('Locust load test (5 min, 50 users)') {
+        stage('Performance test (Locust)') {
             steps {
                 sh '''
                     docker build -f tests/performance/Dockerfile -t circleguard-locust:stage .
@@ -185,7 +188,7 @@ pipeline {
                       -e CIRCLEGUARD_GATEWAY_SERVICE_URL=http://host.docker.internal:30087 \
                       -v ${PWD}/locust-reports:/reports \
                       circleguard-locust:stage \
-                      -u 50 -r 10 -t 5m \
+                      -u ${LOCUST_USERS} -r ${LOCUST_SPAWN} -t ${LOCUST_DURATION} \
                       --csv /reports/stage --html /reports/stage.html
                 '''
                 archiveArtifacts artifacts: 'locust-reports/**', allowEmptyArchive: false

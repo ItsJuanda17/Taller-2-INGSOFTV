@@ -134,16 +134,6 @@ class CampusMember(HttpUser):
 
 
 # -----------------------------------------------------------------------------
-# Stress profile: same call patterns but no think-time (no wait_time). Use
-# this for spike/soak runs by invoking with --tags stress, e.g.:
-#   locust -f locustfile.py --tags stress --headless -u 200 -r 50 -t 5m
-# -----------------------------------------------------------------------------
-class StressUser(CampusMember):
-    """Inherits the same tasks but hammers the API with no pauses."""
-    wait_time = between(0, 0)
-
-
-# -----------------------------------------------------------------------------
 # Hook: print a one-line summary at run end. Useful in Jenkins logs.
 # -----------------------------------------------------------------------------
 @events.quitting.add_listener
