@@ -233,11 +233,42 @@ pipeline {
         stage('Generate release notes') {
             steps {
                 sh '''
-                    docker run --rm -v "${WORKSPACE}:/work" -w /work \\
-                      orhunp/git-cliff:latest \\
-                      --tag ${RELEASE_TAG} \\
-                      --unreleased \\
-                      -o RELEASE_NOTES.md
+                    set -e
+                    PREV="$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD | tail -1)"
+
+                    section() {
+                        out="$(git log --pretty=format:'- %s (%h — %an)' --extended-regexp --grep="^$2" "${PREV}..HEAD")"
+                        [ -z "$out" ] && return 0
+                        echo "### $1"
+                        printf '%s\\n' "$out" | sed -E "s/^- $2(\\([^)]*\\))?[!]?:[ \\t]*/- /"
+                        echo ""
+                    }
+
+                    {
+                        echo "# CircleGuard — Release Notes"
+                        echo ""
+                        echo "## ${RELEASE_TAG} — $(date +%Y-%m-%d)"
+                        echo ""
+                        echo "_Changes since ${PREV}._"
+                        echo ""
+
+                        section "Features"      "feat"
+                        section "Bug Fixes"     "fix"
+                        section "Performance"   "perf"
+                        section "Refactor"      "refactor"
+                        section "Tests"         "test"
+                        section "Documentation" "docs"
+                        section "CI / Build"    "(ci|build)"
+                        section "Chores"        "chore"
+
+                        rest="$(git log --pretty=format:'- %s (%h — %an)' --extended-regexp --grep='^(feat|fix|perf|refactor|test|docs|ci|build|chore)' --invert-grep "${PREV}..HEAD")"
+                        if [ -n "$rest" ]; then
+                            echo "### Other"
+                            echo "$rest"
+                            echo ""
+                        fi
+                    } > RELEASE_NOTES.md
+
                     echo "===== RELEASE_NOTES.md ====="
                     cat RELEASE_NOTES.md
                 '''
