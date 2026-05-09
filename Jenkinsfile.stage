@@ -199,32 +199,47 @@ pipeline {
 
                     kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} delete pod ${POD} --ignore-not-found
 
-                    set +e
+                    # Wrap locust so the container stays alive after the run; otherwise
+                    # `kubectl cp` cannot read /tmp from a terminated container.
                     kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} run ${POD} \
                       --image=circleguard-locust:stage \
                       --image-pull-policy=IfNotPresent \
                       --restart=Never \
-                      -i --attach \
                       --env=JWT_SECRET="${JWT}" \
                       --env=CIRCLEGUARD_AUTH_SERVICE_URL=http://auth-service.${NAMESPACE}.svc.cluster.local:8180 \
                       --env=CIRCLEGUARD_IDENTITY_SERVICE_URL=http://identity-service.${NAMESPACE}.svc.cluster.local:8083 \
                       --env=CIRCLEGUARD_PROMOTION_SERVICE_URL=http://promotion-service.${NAMESPACE}.svc.cluster.local:8088 \
                       --env=CIRCLEGUARD_DASHBOARD_SERVICE_URL=http://dashboard-service.${NAMESPACE}.svc.cluster.local:8084 \
                       --env=CIRCLEGUARD_GATEWAY_SERVICE_URL=http://gateway-service.${NAMESPACE}.svc.cluster.local:8087 \
-                      -- \
-                      -u ${LOCUST_USERS} -r ${LOCUST_SPAWN} -t ${LOCUST_DURATION} \
-                      --csv /tmp/stage --html /tmp/stage.html
-                    EXIT=$?
-                    set -e
+                      --command -- \
+                      sh -c "cd /locust && locust -f locustfile.py --headless -u ${LOCUST_USERS} -r ${LOCUST_SPAWN} -t ${LOCUST_DURATION} --csv /tmp/stage --html /tmp/stage.html; echo \\$? > /tmp/exit_code; sleep infinity"
 
-                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} cp ${POD}:/tmp/stage.html               locust-reports/stage.html               || true
-                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} cp ${POD}:/tmp/stage_stats.csv          locust-reports/stage_stats.csv          || true
-                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} cp ${POD}:/tmp/stage_failures.csv       locust-reports/stage_failures.csv       || true
-                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} cp ${POD}:/tmp/stage_stats_history.csv  locust-reports/stage_stats_history.csv  || true
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} wait --for=condition=Ready pod/${POD} --timeout=2m
+
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} logs -f ${POD} &
+                    LOG_PID=$!
+
+                    while ! kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} exec ${POD} -- test -f /tmp/exit_code 2>/dev/null; do
+                        sleep 5
+                    done
+
+                    kill ${LOG_PID} 2>/dev/null || true
+                    wait ${LOG_PID} 2>/dev/null || true
+
+                    EXIT="$(kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} exec ${POD} -- cat /tmp/exit_code)"
+
+                    sh scripts/ci/copy-locust-reports-from-pod.sh "${KUBECONFIG}" "${NAMESPACE}" "${POD}" stage
+
                     kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} delete pod ${POD} --ignore-not-found
+
+                    test -s locust-reports/stage.html
                     exit ${EXIT}
                 '''
-                archiveArtifacts artifacts: 'locust-reports/**', allowEmptyArchive: true
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'locust-reports/**', allowEmptyArchive: false
+                }
             }
         }
     }
