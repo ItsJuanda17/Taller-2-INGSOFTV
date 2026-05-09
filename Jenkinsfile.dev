@@ -23,6 +23,9 @@ pipeline {
         NAMESPACE  = 'circleguard'
         IMAGE_TAG  = "dev-${env.BUILD_NUMBER}"
         KUBECONFIG = "/var/jenkins_home/.kube/config"
+        LOCUST_USERS = '20'
+        LOCUST_SPAWN = '5'
+        LOCUST_DURATION = '1m'
     }
 
     stages {
@@ -161,13 +164,25 @@ pipeline {
         stage('E2E (REST Assured)') {
             steps {
                 sh '''
-                    AUTH_URL=http://host.docker.internal:30180 \
-                    IDENTITY_URL=http://host.docker.internal:30083 \
-                    PROMOTION_URL=http://host.docker.internal:30088 \
-                    DASHBOARD_URL=http://host.docker.internal:30084 \
-                    GATEWAY_URL=http://host.docker.internal:30087 \
-                    NOTIFICATION_URL=http://host.docker.internal:30082 \
-                    JWT_SECRET="$(kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} get secret circleguard-secrets -o jsonpath='{.data.JWT_SIGNING_KEY}' | base64 -d)" \
+                    set -e
+                    JWT="$(kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} get secret circleguard-secrets -o jsonpath='{.data.JWT_SIGNING_KEY}' | base64 -d)"
+
+                    trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} port-forward svc/auth-service         30180:8180 > /dev/null 2>&1 &
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} port-forward svc/identity-service     30083:8083 > /dev/null 2>&1 &
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} port-forward svc/promotion-service    30088:8088 > /dev/null 2>&1 &
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} port-forward svc/dashboard-service    30084:8084 > /dev/null 2>&1 &
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} port-forward svc/gateway-service      30087:8087 > /dev/null 2>&1 &
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} port-forward svc/notification-service 30082:8082 > /dev/null 2>&1 &
+                    sleep 6
+
+                    AUTH_URL=http://localhost:30180 \
+                    IDENTITY_URL=http://localhost:30083 \
+                    PROMOTION_URL=http://localhost:30088 \
+                    DASHBOARD_URL=http://localhost:30084 \
+                    GATEWAY_URL=http://localhost:30087 \
+                    NOTIFICATION_URL=http://localhost:30082 \
+                    JWT_SECRET="${JWT}" \
                     ./gradlew :tests:e2e:test --no-daemon --console=plain || true
                 '''
             }
@@ -182,18 +197,48 @@ pipeline {
         stage('Locust smoke (1 min)') {
             steps {
                 sh '''
+                    set -e
                     docker build -f tests/performance/Dockerfile -t circleguard-locust:dev .
                     rm -rf locust-reports && mkdir -p locust-reports
-                    docker run --rm \
-                      -e CIRCLEGUARD_AUTH_SERVICE_URL=http://host.docker.internal:30180 \
-                      -e CIRCLEGUARD_IDENTITY_SERVICE_URL=http://host.docker.internal:30083 \
-                      -e CIRCLEGUARD_PROMOTION_SERVICE_URL=http://host.docker.internal:30088 \
-                      -e CIRCLEGUARD_DASHBOARD_SERVICE_URL=http://host.docker.internal:30084 \
-                      -e CIRCLEGUARD_GATEWAY_SERVICE_URL=http://host.docker.internal:30087 \
-                      -v ${PWD}/locust-reports:/reports \
-                      circleguard-locust:dev \
-                      -u 20 -r 5 -t 1m \
-                      --csv /reports/dev --html /reports/dev.html || true
+
+                    POD=locust-dev-${BUILD_NUMBER}
+                    JWT="$(kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} get secret circleguard-secrets -o jsonpath='{.data.JWT_SIGNING_KEY}' | base64 -d)"
+
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} delete pod ${POD} --ignore-not-found
+
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} run ${POD} \
+                      --image=circleguard-locust:dev \
+                      --image-pull-policy=IfNotPresent \
+                      --restart=Never \
+                      --env=JWT_SECRET="${JWT}" \
+                      --env=CIRCLEGUARD_AUTH_SERVICE_URL=http://auth-service.${NAMESPACE}.svc.cluster.local:8180 \
+                      --env=CIRCLEGUARD_IDENTITY_SERVICE_URL=http://identity-service.${NAMESPACE}.svc.cluster.local:8083 \
+                      --env=CIRCLEGUARD_PROMOTION_SERVICE_URL=http://promotion-service.${NAMESPACE}.svc.cluster.local:8088 \
+                      --env=CIRCLEGUARD_DASHBOARD_SERVICE_URL=http://dashboard-service.${NAMESPACE}.svc.cluster.local:8084 \
+                      --env=CIRCLEGUARD_GATEWAY_SERVICE_URL=http://gateway-service.${NAMESPACE}.svc.cluster.local:8087 \
+                      --command -- \
+                      sh -c "cd /locust && locust -f locustfile.py --headless -u ${LOCUST_USERS} -r ${LOCUST_SPAWN} -t ${LOCUST_DURATION} --csv /tmp/dev --html /tmp/dev.html; echo \\$? > /tmp/exit_code; sleep infinity"
+
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} wait --for=condition=Ready pod/${POD} --timeout=2m
+
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} logs -f ${POD} &
+                    LOG_PID=$!
+
+                    while ! kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} exec ${POD} -- test -f /tmp/exit_code 2>/dev/null; do
+                        sleep 5
+                    done
+
+                    kill ${LOG_PID} 2>/dev/null || true
+                    wait ${LOG_PID} 2>/dev/null || true
+
+                    EXIT="$(kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} exec ${POD} -- cat /tmp/exit_code)"
+
+                    sh scripts/ci/copy-locust-reports-from-pod.sh "${KUBECONFIG}" "${NAMESPACE}" "${POD}" dev
+
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} delete pod ${POD} --ignore-not-found
+
+                    test -s locust-reports/dev.html || true
+                    exit ${EXIT} || true
                 '''
                 archiveArtifacts artifacts: 'locust-reports/**', allowEmptyArchive: true
             }

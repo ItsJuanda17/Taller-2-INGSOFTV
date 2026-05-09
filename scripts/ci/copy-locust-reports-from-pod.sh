@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copia informes Locust desde el pod (vivo gracias al `sleep infinity` del wrapper)
 # hacia ./locust-reports/.
-# Uso: sh scripts/ci/copy-locust-reports-from-pod.sh <kubeconfig> <namespace> <pod> <stage|master>
+# Uso: sh scripts/ci/copy-locust-reports-from-pod.sh <kubeconfig> <namespace> <pod> <dev|stage|master>
 
 set -e
 
@@ -11,14 +11,14 @@ POD="$3"
 PREFIX="$4"
 
 if [ -z "$KUBECONFIG" ] || [ -z "$NAMESPACE" ] || [ -z "$POD" ] || [ -z "$PREFIX" ]; then
-  echo "Usage: $0 <kubeconfig> <namespace> <pod-name> <stage|master>" >&2
+  echo "Usage: $0 <kubeconfig> <namespace> <pod-name> <dev|stage|master>" >&2
   exit 2
 fi
 
 case "$PREFIX" in
-  stage|master) ;;
+  dev|stage|master) ;;
   *)
-    echo "PREFIX must be stage or master" >&2
+    echo "PREFIX must be dev, stage or master" >&2
     exit 2
     ;;
 esac
