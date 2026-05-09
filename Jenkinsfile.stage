@@ -181,6 +181,7 @@ pipeline {
                     docker build -f tests/performance/Dockerfile -t circleguard-locust:stage .
                     rm -rf locust-reports && mkdir -p locust-reports
                     docker run --rm \
+                      --add-host=host.docker.internal:host-gateway \
                       -e CIRCLEGUARD_AUTH_SERVICE_URL=http://host.docker.internal:30180 \
                       -e CIRCLEGUARD_IDENTITY_SERVICE_URL=http://host.docker.internal:30083 \
                       -e CIRCLEGUARD_PROMOTION_SERVICE_URL=http://host.docker.internal:30088 \
