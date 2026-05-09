@@ -178,21 +178,41 @@ pipeline {
         stage('Performance test (Locust)') {
             steps {
                 sh '''
+                    set -e
                     docker build -f tests/performance/Dockerfile -t circleguard-locust:stage .
                     rm -rf locust-reports && mkdir -p locust-reports
-                    docker run --rm \
-                      --add-host=host.docker.internal:host-gateway \
-                      -e CIRCLEGUARD_AUTH_SERVICE_URL=http://host.docker.internal:30180 \
-                      -e CIRCLEGUARD_IDENTITY_SERVICE_URL=http://host.docker.internal:30083 \
-                      -e CIRCLEGUARD_PROMOTION_SERVICE_URL=http://host.docker.internal:30088 \
-                      -e CIRCLEGUARD_DASHBOARD_SERVICE_URL=http://host.docker.internal:30084 \
-                      -e CIRCLEGUARD_GATEWAY_SERVICE_URL=http://host.docker.internal:30087 \
-                      -v ${PWD}/locust-reports:/reports \
-                      circleguard-locust:stage \
+
+                    POD=locust-stage-${BUILD_NUMBER}
+                    JWT="$(kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} get secret circleguard-secrets -o jsonpath='{.data.JWT_SIGNING_KEY}' | base64 -d)"
+
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} delete pod ${POD} --ignore-not-found
+
+                    set +e
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} run ${POD} \
+                      --image=circleguard-locust:stage \
+                      --image-pull-policy=IfNotPresent \
+                      --restart=Never \
+                      -i --attach \
+                      --env=JWT_SECRET="${JWT}" \
+                      --env=CIRCLEGUARD_AUTH_SERVICE_URL=http://auth-service.${NAMESPACE}.svc.cluster.local:8180 \
+                      --env=CIRCLEGUARD_IDENTITY_SERVICE_URL=http://identity-service.${NAMESPACE}.svc.cluster.local:8083 \
+                      --env=CIRCLEGUARD_PROMOTION_SERVICE_URL=http://promotion-service.${NAMESPACE}.svc.cluster.local:8088 \
+                      --env=CIRCLEGUARD_DASHBOARD_SERVICE_URL=http://dashboard-service.${NAMESPACE}.svc.cluster.local:8084 \
+                      --env=CIRCLEGUARD_GATEWAY_SERVICE_URL=http://gateway-service.${NAMESPACE}.svc.cluster.local:8087 \
+                      -- \
                       -u ${LOCUST_USERS} -r ${LOCUST_SPAWN} -t ${LOCUST_DURATION} \
-                      --csv /reports/stage --html /reports/stage.html
+                      --csv /tmp/stage --html /tmp/stage.html
+                    EXIT=$?
+                    set -e
+
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} cp ${POD}:/tmp/stage.html               locust-reports/stage.html               || true
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} cp ${POD}:/tmp/stage_stats.csv          locust-reports/stage_stats.csv          || true
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} cp ${POD}:/tmp/stage_failures.csv       locust-reports/stage_failures.csv       || true
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} cp ${POD}:/tmp/stage_stats_history.csv  locust-reports/stage_stats_history.csv  || true
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} delete pod ${POD} --ignore-not-found
+                    exit ${EXIT}
                 '''
-                archiveArtifacts artifacts: 'locust-reports/**', allowEmptyArchive: false
+                archiveArtifacts artifacts: 'locust-reports/**', allowEmptyArchive: true
             }
         }
     }
