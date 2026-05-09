@@ -1,17 +1,3 @@
-# =============================================================================
-# CircleGuard - shared ConfigMap
-# -----------------------------------------------------------------------------
-# Holds NON-SENSITIVE configuration that every microservice needs:
-#   - URLs of sibling services (Kubernetes DNS, e.g. http://identity-service:8083)
-#   - Kafka / Redis / Postgres / Neo4j endpoints
-#
-# In Kubernetes, a Service named "identity-service" inside namespace
-# "circleguard" is reachable at:
-#     http://identity-service.circleguard.svc.cluster.local:<port>
-# or (when the caller is in the same namespace) simply:
-#     http://identity-service:<port>
-# That's how microservices find each other -- no IP addresses ever.
-# =============================================================================
 apiVersion: v1
 kind: ConfigMap
 metadata:

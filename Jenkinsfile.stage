@@ -157,13 +157,25 @@ pipeline {
         stage('E2E (REST Assured) — strict') {
             steps {
                 sh '''
-                    AUTH_URL=http://host.docker.internal:30180 \
-                    IDENTITY_URL=http://host.docker.internal:30083 \
-                    PROMOTION_URL=http://host.docker.internal:30088 \
-                    DASHBOARD_URL=http://host.docker.internal:30084 \
-                    GATEWAY_URL=http://host.docker.internal:30087 \
-                    NOTIFICATION_URL=http://host.docker.internal:30082 \
-                    JWT_SECRET="$(kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} get secret circleguard-secrets -o jsonpath='{.data.JWT_SIGNING_KEY}' | base64 -d)" \
+                    set -e
+                    JWT="$(kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} get secret circleguard-secrets -o jsonpath='{.data.JWT_SIGNING_KEY}' | base64 -d)"
+
+                    trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} port-forward svc/auth-service         30180:8180 > /dev/null 2>&1 &
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} port-forward svc/identity-service     30083:8083 > /dev/null 2>&1 &
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} port-forward svc/promotion-service    30088:8088 > /dev/null 2>&1 &
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} port-forward svc/dashboard-service    30084:8084 > /dev/null 2>&1 &
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} port-forward svc/gateway-service      30087:8087 > /dev/null 2>&1 &
+                    kubectl --kubeconfig=${KUBECONFIG} -n ${NAMESPACE} port-forward svc/notification-service 30082:8082 > /dev/null 2>&1 &
+                    sleep 6
+
+                    AUTH_URL=http://localhost:30180 \
+                    IDENTITY_URL=http://localhost:30083 \
+                    PROMOTION_URL=http://localhost:30088 \
+                    DASHBOARD_URL=http://localhost:30084 \
+                    GATEWAY_URL=http://localhost:30087 \
+                    NOTIFICATION_URL=http://localhost:30082 \
+                    JWT_SECRET="${JWT}" \
                     ./gradlew :tests:e2e:test --no-daemon --console=plain
                 '''
             }

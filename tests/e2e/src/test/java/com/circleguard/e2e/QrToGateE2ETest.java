@@ -2,7 +2,6 @@ package com.circleguard.e2e;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.util.List;
 import java.util.UUID;
@@ -20,7 +19,6 @@ import static org.hamcrest.Matchers.notNullValue;
  * 3. Hand that QR token to gateway-service /gate/validate. Since the user
  *    has no health status in Redis, the gate should reply GREEN.
  */
-@EnabledIf("authReachable")
 class QrToGateE2ETest extends BaseE2ETest {
 
     @Test
@@ -42,11 +40,6 @@ class QrToGateE2ETest extends BaseE2ETest {
 
         // Step 2: gateway validates the QR token. No status set in Redis for
         // this brand-new anonId, so the validator falls through to GREEN.
-        if (!gatewayReachable()) {
-            // Gateway unavailable -> at least verify auth produced a token.
-            org.junit.jupiter.api.Assertions.assertNotNull(qrToken);
-            return;
-        }
         given()
                 .baseUri(GATEWAY_URL)
                 .contentType("application/json")
@@ -62,9 +55,6 @@ class QrToGateE2ETest extends BaseE2ETest {
     @Test
     @DisplayName("Gateway rejects a JWT-shaped string signed with the wrong secret")
     void gatewayRejectsTokenSignedWithWrongKey() {
-        if (!gatewayReachable()) {
-            return; // skip silently — guarded by class-level EnabledIf("authReachable")
-        }
         // Manually crafted token signed with an unrelated secret -> RED.
         String bogusToken = io.jsonwebtoken.Jwts.builder()
                 .setSubject(UUID.randomUUID().toString())

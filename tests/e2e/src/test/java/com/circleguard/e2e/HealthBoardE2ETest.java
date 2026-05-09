@@ -2,7 +2,6 @@ package com.circleguard.e2e;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIf;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.notNullValue;
@@ -15,7 +14,6 @@ import static org.hamcrest.Matchers.notNullValue;
  * a non-null body proves both services are up AND that the inter-service
  * call succeeded end-to-end.
  */
-@EnabledIf("dashboardReachable")
 class HealthBoardE2ETest extends BaseE2ETest {
 
     @Test

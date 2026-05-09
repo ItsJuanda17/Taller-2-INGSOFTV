@@ -2,7 +2,6 @@ package com.circleguard.e2e;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.util.UUID;
 
@@ -17,7 +16,6 @@ import static org.hamcrest.Matchers.notNullValue;
  * person (no LDAP, no prior account) and returns an anonymous UUID, exactly
  * the same call shape the front-end uses when a guest signs in at the gate.
  */
-@EnabledIf("identityReachable")
 class VisitorRegistrationE2ETest extends BaseE2ETest {
 
     @Test

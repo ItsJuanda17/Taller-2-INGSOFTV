@@ -2,7 +2,6 @@ package com.circleguard.e2e;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.util.List;
 import java.util.UUID;
@@ -21,7 +20,6 @@ import static org.hamcrest.Matchers.notNullValue;
  *    the public listing. End-state cleanup removes the test row so reruns
  *    don't pollute the catalog.
  */
-@EnabledIf("promotionReachable")
 class BuildingAdminE2ETest extends BaseE2ETest {
 
     @Test

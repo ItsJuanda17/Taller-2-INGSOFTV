@@ -2,7 +2,6 @@ package com.circleguard.e2e;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.util.List;
 import java.util.UUID;
@@ -19,7 +18,6 @@ import static org.hamcrest.Matchers.equalTo;
  * only). This flow proves the SecurityConfig + JwtAuthenticationFilter
  * combo enforces that.
  */
-@EnabledIf("identityReachable")
 class IdentityLookupAuthorizationE2ETest extends BaseE2ETest {
 
     @Test
