@@ -24,7 +24,8 @@ jwt:
 
 qr:
   secret: "my-qr-secret-key-for-dev-1234567890"
-  expiration: 300
+  # Milliseconds — QrTokenService treats this as ms (currentTimeMillis() + expiration).
+  expiration: 300000
 
 server:
   port: 8180
